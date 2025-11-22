@@ -14,7 +14,7 @@ const app = express();
    \u2705 CORS SETUP
 =========================== */
 app.use(cors({
-  origin: "http://localhost:5173",
+  origin: "http://172.16.130.31:3000",
   methods: ["GET", "POST"],
   credentials: true
 }));
@@ -263,4 +263,9 @@ io.on("connection", socket => {
 /* ===========================
    \u2705 START SERVER
 =========================== */
-server.listen(5000, () => console.log("Server running on port 5000"));
+const PORT = process.env.PORT || 5000;
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
+
