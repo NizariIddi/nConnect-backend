@@ -14,7 +14,7 @@ const app = express();
    \u2705 CORS SETUP
 =========================== */
 app.use(cors({
-  origin: "http://172.16.130.31:3000",
+  origin: "http://localhost:5173",
   methods: ["GET", "POST"],
   credentials: true
 }));
@@ -142,6 +142,35 @@ app.get("/friends/:userId", (req, res) => {
   });
 });
 
+// Remove friend
+app.post("/remove-friend", (req, res) => {
+  const { userId, friendId } = req.body;
+
+  if (!userId || !friendId) {
+    return res.json({ status: "error", message: "User and friend IDs required" });
+  }
+
+  // Delete friendship (both directions for bidirectional friendship)
+  const sql = `
+    DELETE FROM friends 
+    WHERE (user_id = ? AND friend_id = ?) 
+       OR (user_id = ? AND friend_id = ?)
+  `;
+  
+  db.query(sql, [userId, friendId, friendId, userId], (err, result) => {
+    if (err) {
+      console.error("Remove friend error:", err);
+      return res.json({ status: "error", error: err });
+    }
+    
+    res.json({ 
+      status: "success", 
+      message: "Friend removed successfully",
+      deletedCount: result.affectedRows
+    });
+  });
+});
+
 /* ===========================
    \u2705 MESSAGES & FILES
 =========================== */
@@ -220,7 +249,77 @@ app.post("/update-profile", upload.fields([
 });
 
 /* ===========================
-   \u2705 SOCKET.IO
+   ✅ MESSAGE DELETION ENDPOINTS
+=========================== */
+
+// Delete selected messages - ANY user in conversation can delete
+app.post("/delete-messages", (req, res) => {
+  const { messageIds, userId, friendId } = req.body;
+
+  if (!messageIds || !Array.isArray(messageIds) || messageIds.length === 0) {
+    return res.json({ status: "error", message: "No messages to delete" });
+  }
+
+  if (!userId || !friendId) {
+    return res.json({ status: "error", message: "User and friend IDs required" });
+  }
+
+  // Security: Only allow users to delete messages from their own conversations
+  // This means messages where they are either the sender OR receiver
+  const sql = `
+    DELETE FROM messages 
+    WHERE id IN (?) 
+    AND (
+      (sender_id = ? AND receiver_id = ?) 
+      OR (sender_id = ? AND receiver_id = ?)
+    )
+  `;
+  
+  db.query(sql, [messageIds, userId, friendId, friendId, userId], (err, result) => {
+    if (err) {
+      console.error("Delete messages error:", err);
+      return res.json({ status: "error", error: err });
+    }
+    
+    res.json({ 
+      status: "success", 
+      message: "Messages deleted successfully",
+      deletedCount: result.affectedRows
+    });
+  });
+});
+
+// Clear entire conversation between two users
+app.post("/clear-conversation", (req, res) => {
+  const { userId, friendId } = req.body;
+
+  if (!userId || !friendId) {
+    return res.json({ status: "error", message: "User IDs required" });
+  }
+
+  // Delete all messages between the two users
+  const sql = `
+    DELETE FROM messages 
+    WHERE (sender_id = ? AND receiver_id = ?) 
+       OR (sender_id = ? AND receiver_id = ?)
+  `;
+  
+  db.query(sql, [userId, friendId, friendId, userId], (err, result) => {
+    if (err) {
+      console.error("Clear conversation error:", err);
+      return res.json({ status: "error", error: err });
+    }
+    
+    res.json({ 
+      status: "success", 
+      message: "Conversation cleared successfully",
+      deletedCount: result.affectedRows
+    });
+  });
+});
+
+/* ===========================
+   ✅ SOCKET.IO (Updated)
 =========================== */
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -252,6 +351,16 @@ io.on("connection", socket => {
     });
   });
 
+  // Handle message deletion
+  socket.on("messages_deleted", ({ messageIds, roomId }) => {
+    io.to(roomId).emit("messages_deleted", { messageIds });
+  });
+
+  // Handle conversation cleared
+  socket.on("conversation_cleared", ({ roomId }) => {
+    io.to(roomId).emit("conversation_cleared");
+  });
+
   // Disconnect
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.id);
@@ -261,11 +370,12 @@ io.on("connection", socket => {
 });
 
 /* ===========================
-   \u2705 START SERVER
+   🚀 START SERVER (IMPORTANT)
 =========================== */
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+server.listen(PORT, () => {
+  console.log(`Server + Socket.IO running on port ${PORT}`);
 });
+
 
